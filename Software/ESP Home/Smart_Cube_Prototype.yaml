@@ -1,0 +1,244 @@
+esphome:
+  name: smart_cube_prototype
+  platform: ESP32
+  board: esp-wrover-kit
+  includes:
+    - uart_read_line_sensor.h
+  
+wifi:
+  ssid: !secret_WIFI_SSID
+  password: !secret_WIFI_PSW
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Smart Cube Prototype"
+    password: "dsfiN6wHvXHV"
+
+captive_portal:
+
+# Enable logging
+logger:
+  level: VERBOSE #makes uart stream available in esphome logstream
+  baud_rate: 0 #disable logging over uart
+
+uart:
+  id: uart_mbed
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 9600
+  
+text_sensor:
+  # UART Readline Sensor
+  - platform: custom
+    lambda: |-
+      auto my_custom_sensor = new UartReadLineSensor(id(uart_mbed));
+      App.register_component(my_custom_sensor);
+      return {my_custom_sensor};
+    text_sensors:
+      id: "uart_readline"
+  # Orientation Sensor
+  - platform: template
+    lambda: |-
+      if (id(uart_readline).state == "*ORI=L#") {
+        return {"LEFT"};
+      } else if(id(uart_readline).state == "*ORI=R#") {
+        return {"RIGHT"};
+      } else if(id(uart_readline).state == "*ORI=U#") {
+        return {"UP"};
+      } else {
+        return {};
+      }
+    id: sensor_orientation
+    name: Orientation Sensor
+    update_interval: 1s
+
+# Obtain time from NTP Service
+time:
+  - platform: sntp
+    id: sntp_time
+    # Push Time from NTP every minute
+    on_time:
+      - seconds: 0
+        then:
+          - uart.write:
+              id: uart_mbed
+              data: !lambda |-
+                auto time_text = id(sntp_time).now().strftime("%H%M");
+                return {0x2A, 0x74, 0x69, 0x3D, time_text.c_str()[0], time_text.c_str()[1], time_text.c_str()[2], time_text.c_str()[3], 0x0D};
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        then:
+          - uart.write:
+              id: uart_mbed
+              data: !lambda |-
+                auto time_text = id(sntp_time).now().strftime("%Y%m%d%w");
+                return {0x2A, 0x64, 0x61, 0x3D, time_text.c_str()[0], time_text.c_str()[1], time_text.c_str()[2], time_text.c_str()[3], time_text.c_str()[4], time_text.c_str()[5], time_text.c_str()[6], time_text.c_str()[7], time_text.c_str()[8], 0x0D};
+
+#mqtt:
+#  broker: 10.0.0.39
+#  username: mqtt
+#  password: 31415926
+#  discovery: True
+#  on_message:
+#    - topic: homeassistant/switch/smart_cube_status/set
+#      payload: "OFF"
+#      then:
+#        - mqtt.publish:
+#            topic: homeassistant/switch/smart_cube_status/state
+#            payload: "OFF"
+#        - switch.turn_on: switch_shutdown
+
+# Home Assistant API
+api:
+
+ota:
+
+switch:
+  # Controlled Devices
+  - platform: template
+    name: "Light 1"
+    id: light_1
+    lambda: |-
+      if (id(uart_readline).state == "*L1=1#") {
+        return true;
+      } else if (id(uart_readline).state == "*L1=0#") {
+        return false;
+      } else {
+        return {};
+      }
+  - platform: template
+    name: "Light 2"
+    id: light_2
+    lambda: |-
+      if (id(uart_readline).state == "*L2=1#") {
+        return true;
+      } else if (id(uart_readline).state == "*L2=0#") {
+        return false;
+      } else {
+        return {};
+      }
+  - platform: template
+    name: "Light 3"
+    id: light_3
+    lambda: |-
+      if (id(uart_readline).state == "*L3=1#") {
+        return true;
+      } else if (id(uart_readline).state == "*L3=0#") {
+        return false;
+      } else {
+        return {};
+      }
+  - platform: template
+    name: "Light 4"
+    id: light_4
+    lambda: |-
+      if (id(uart_readline).state == "*L4=1#") {
+        return true;
+      } else if (id(uart_readline).state == "*L4=0#") {
+        return false;
+      } else {
+        return {};
+      }
+    
+  # Built-in Power-Related Switches
+  - platform: shutdown
+    name: "Shutdown Switch"
+    id: switch_shutdown
+  - platform: restart
+    name: "Restart Switch"
+    id: switch_restart
+    
+  # Push New Notification Reminder
+  - platform: template
+    name: "New Notification"
+    id: switch_new_not
+    lambda: |-
+      if (id(uart_readline).state == "*NOT DIS#") {
+        return false;
+      } else {
+        return {};
+      }
+    turn_on_action:
+      - uart.write: "*no=p\r"
+  
+  # Push Controlled Devices States
+  - platform: template
+    name: "Pull Device"
+    id: flag_pull_deivce_update
+    lambda: |-
+      if (id(uart_readline).state == "*DE=?#") {
+        return true;
+      } else if(id(uart_readline).state == "*DE GOT#") {
+        return false;
+      } else {
+        return {};
+      }
+    on_turn_on:
+      - uart.write:
+          id: uart_mbed
+          data: !lambda |-
+            char l1;
+            char l2;
+            char l3;
+            char l4;
+            if (id(light_1).state) { l1 = '1'; }
+            else { l1 = '0'; }
+            if (id(light_2).state) { l2 = '1'; }
+            else { l2 = '0'; }
+            if (id(light_3).state) { l3 = '1'; }
+            else { l3 = '0'; }
+            if (id(light_4).state) { l4 = '1'; }
+            else { l4 = '0'; }
+            return {0x2A, 0x64, 0x65, 0x3D, l1, l2, l3, l4, 0x0D};
+            
+    
+#  - platform: template
+#    name: "Initialization"
+#    id: flag_init
+#    lambda: |-
+#      if (id(uart_readline).state == "*INIT#") {
+#        return true;
+#      } else {
+#        return {};
+#      }
+#    on_turn_on:
+#      - logger.log: "NTP Time Requested."
+#      # Push Date from NTP
+#      - uart.write:
+#          id: uart_mbed
+#          data: !lambda |-
+#            auto time_text = id(sntp_time).now().strftime("%Y%m%d%w");
+#            return {0x2A, 0x64, 0x61, 0x3D, time_text.c_str()[0], time_text.c_str()[1], time_text.c_str()[2], time_text.c_str()[3], time_text.c_str()[4], time_text.c_str()[5], time_text.c_str()[6], time_text.c_str()[7], time_text.c_str()[8], 0x0D};
+#      - delay: 3s
+#      # Push Time from NTP
+#      - uart.write:
+#          id: uart_mbed
+#          data: !lambda |-
+#            auto time_text = id(sntp_time).now().strftime("%H%M");
+#            return {0x2A, 0x74, 0x69, 0x3D, time_text.c_str()[0], time_text.c_str()[1], time_text.c_str()[2], time_text.c_str()[3], 0x0D};
+
+    
+binary_sensor:
+  # Status Sensor
+  - platform: status
+    name: "Smart Cube Status"
+  # Vibration Sensor
+  - platform: template
+    device_class: vibration
+    id: sensor_vibration
+    name: Vibration Sensor
+    lambda: |-
+      if (id(uart_readline).state == "*VI=Y#") {
+        return true;
+      } else if(id(uart_readline).state == "*VI=N#") {
+        return false;
+      } else {
+        return {};
+      }
+
+#interval:
+  # Check Power State
+#  - interval: 10s
+#    then:
+#      - uart.write: "\r*pow=?#\r"
